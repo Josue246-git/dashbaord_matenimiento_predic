@@ -9,6 +9,8 @@ const Dashboard = () => {
   const [isCollecting, setIsCollecting] = useState(false);
   const [modelPrediction, setModelPrediction] = useState(null);
   const [predictionConfidence, setPredictionConfidence] = useState(null);
+  const [stateCounts, setStateCounts] = useState({ normal: 0, alerta: 0, falla: 0 });
+  const [veredictoFinal, setVeredictoFinal] = useState(null);
   
   const UPDATE_INTERVAL = 2000;
   const API_ENDPOINT = 'http://192.168.100.25:5000';
@@ -102,6 +104,57 @@ const Dashboard = () => {
     };
   };
 
+
+  // Actualizar el contador de estados
+  const actualizarContadorEstados = (nuevoEstado) => {
+    setStateCounts(prevCounts => ({
+      ...prevCounts,
+      [nuevoEstado]: prevCounts[nuevoEstado] + 1
+    }));
+  };
+
+  // Calcular el índice de riesgo
+  const calcularIndiceRiesgo = () => {
+    const pesos = { normal: 1, alerta: 2, falla: 3 };
+    const total = stateCounts.normal + stateCounts.alerta + stateCounts.falla;
+
+    if (total === 0) return 0;
+
+    const indice = (
+      (stateCounts.normal * pesos.normal) +
+      (stateCounts.alerta * pesos.alerta) +
+      (stateCounts.falla * pesos.falla)
+    ) / total;
+
+    return indice;
+  };
+
+  // Determinar el veredicto final
+  const determinarVeredictoFinal = () => {
+    const indice = calcularIndiceRiesgo();
+
+    if (indice >= 2.5) {
+      return {
+        estado: 'Peligro Crítico',
+        color: 'text-red-500',
+        recomendacion: '¡Detener la licuadora inmediatamente y realizar mantenimiento!'
+      };
+    } else if (indice >= 1.5) {
+      return {
+        estado: 'Precaución',
+        color: 'text-yellow-500',
+        recomendacion: 'Revisar la licuadora y considerar mantenimiento preventivo.'
+      };
+    } else {
+      return {
+        estado: 'Buen Estado',
+        color: 'text-green-500',
+        recomendacion: 'La licuadora está funcionando correctamente.'
+      };
+    }
+  };
+
+
   // Función para obtener el color de la barra de vibración
   const getVibrationColor = (value, axis) => {
     if (estaEnRangoFalla(value, axis.toLowerCase())) {
@@ -118,8 +171,16 @@ const Dashboard = () => {
     if (motorData.length > 0) {
       const nuevoEstado = determinarEstado(motorData);
       setCurrentStatus(nuevoEstado.status);
+      actualizarContadorEstados(nuevoEstado);
     }
   }, [motorData]);
+
+    // Efecto para calcular el veredicto final
+    useEffect(() => {
+      if (!isCollecting && (stateCounts.normal + stateCounts.alerta + stateCounts.falla) > 0) {
+        setVeredictoFinal(determinarVeredictoFinal());
+      }
+    }, [isCollecting, stateCounts]);
 
 
   const toggleDataCollection = async () => {
@@ -202,6 +263,45 @@ const Dashboard = () => {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    );
+  };
+
+  const VeredictoFinal = () => {
+    if (!veredictoFinal) return null;
+
+    return (
+      <div className="mt-6 bg-gray-800 rounded-lg p-4 shadow-lg">
+        <h3 className="text-lg font-medium mb-4">Veredicto Final</h3>
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-400">Estado General:</span>
+            <span className={`text-lg font-bold ${veredictoFinal.color}`}>
+              {veredictoFinal.estado}
+            </span>
+          </div>
+          <div className="text-sm text-gray-400">
+            <p className="font-medium mb-1">Recomendación:</p>
+            <p className={veredictoFinal.color}>{veredictoFinal.recomendacion}</p>
+          </div>
+          <div className="text-sm text-gray-400">
+            <p className="font-medium mb-1">Resumen de Estados:</p>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-gray-700 rounded p-2">
+                <div className="text-sm text-gray-300 mb-1">Normal</div>
+                <div className="font-bold">{stateCounts.normal}</div>
+              </div>
+              <div className="bg-gray-700 rounded p-2">
+                <div className="text-sm text-gray-300 mb-1">Alerta</div>
+                <div className="font-bold">{stateCounts.alerta}</div>
+              </div>
+              <div className="bg-gray-700 rounded p-2">
+                <div className="text-sm text-gray-300 mb-1">Falla</div>
+                <div className="font-bold">{stateCounts.falla}</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -419,6 +519,7 @@ const Dashboard = () => {
             </div>
           ))}
           <ModelPrediction />
+          <VeredictoFinal />
         </div>
       </div>
     </div>
