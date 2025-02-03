@@ -1,126 +1,160 @@
 import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { CheckCircleIcon, ExclamationTriangleIcon, XCircleIcon } from '@heroicons/react/24/solid';
+import { CheckCircleIcon, ExclamationTriangleIcon, XCircleIcon, PlayIcon, StopIcon } from '@heroicons/react/24/solid';
 import axios from 'axios';
 
 const Dashboard = () => {
   const [motorData, setMotorData] = useState([]);
-  const [status, setStatus] = useState('normal');
-  const [revolucionNivel, setRevolucionNivel] = useState(1);
+  const [currentStatus, setCurrentStatus] = useState('Operación Normal');
+  const [isCollecting, setIsCollecting] = useState(false);
+  const [modelPrediction, setModelPrediction] = useState(null);
+  const [predictionConfidence, setPredictionConfidence] = useState(null);
   
-  // Configuración de ThingSpeak (comentada por ahora)
-  // const THINGSPEAK_CHANNEL_ID = "TU_CHANNEL_ID";
-  // const THINGSPEAK_API_KEY = "TU_API_KEY";
-  const UPDATE_INTERVAL = 3000;
+  const UPDATE_INTERVAL = 2000;
+  const API_ENDPOINT = 'http://192.168.100.25:5000';
 
-  // Rangos para cada nivel de revolución
   const RANGOS = {
-    nivel1: {
-      normal: {
-        x: { min: 1.5, max: 12.5 },
-        y: { min: -11.2, max: 0.9 },
-        z: { min: 20.0, max: 20.1 }
-      },
-      alerta: {
-        x: { min: 1.6, max: 17.8 },
-        y: { min: -14.8, max: 4.1 },
-        z: { min: 20.0, max: 20.1 }
-      },
-      falla: {
-        x: { min: -8.7, max: 20.0 },
-        y: { min: -15.5, max: 6.9 },
-        z: { min: 18.0, max: 20.1 }
-      }
+    normal: {
+      x: { min: 3.15, max: 10.40 },
+      y: { min: -8.7, max: 3.15 },
+      z: { min: 20.0447926, max: 20.0447926 }
     },
-    nivel2: {
-      normal: {
-        x: { min: 3.2, max: 10.6 },
-        y: { min: -8.3, max: -2.0 },
-        z: { min: 20.0, max: 20.1 }
-      },
-      alerta: {
-        x: { min: 1.2, max: 15.8 },
-        y: { min: -13.8, max: 2.4 },
-        z: { min: 20.0, max: 20.1 }
-      },
-      falla: {
-        x: { min: 0.3, max: 20.0 },
-        y: { min: -16.4, max: 6.2 },
-        z: { min: 20.0, max: 20.1 }
-      }
+    alerta: {
+      x: { min: 2.29, max: 12.1696498 },
+      y: { min: -12.8276548, max: 4.0795664 },
+      z: { min: 20.0447926, max: 20.0447926 }
+    },
+    falla: {
+      x: { min: -8.7083052, max: 20.0447926 },
+      y: { min: -16.4359454, max: 6.864655 },
+      z: { min: 18.0834626, max: 20.0447926 }
     }
   };
 
-  const getStatusInfo = (data) => {
-    if (!data.length) return { 
-      status: 'normal', 
-      icon: CheckCircleIcon, 
-      color: 'text-status-normal',
-      nivel: revolucionNivel 
-    };
+  // Modificar estas funciones de verificación de rangos
+  const enRango = (valor, rango) => {
+    return valor >= rango.min && valor <= rango.max;
+  };
+
+  // Función para verificar si un valor está dentro de los límites normales
+  const estaEnRangoNormal = (valor, eje) => {
+    return enRango(valor, RANGOS.normal[eje]);
+  };
+
+  // Función para verificar si un valor está en rango de alerta
+  const estaEnRangoAlerta = (valor, eje) => {
+    return enRango(valor, RANGOS.alerta[eje]) && 
+           !enRango(valor, RANGOS.normal[eje]);
+  };
+
+  // Función para verificar si un valor está en rango de falla
+  const estaEnRangoFalla = (valor, eje) => {
+    return enRango(valor, RANGOS.falla[eje]) && 
+           !enRango(valor, RANGOS.alerta[eje]);
+  };
+
+  const determinarEstado = (datos) => {
+    if (!datos || datos.length === 0) {
+      return {
+        status: 'Operación Normal',
+        icon: CheckCircleIcon,
+        color: 'text-green-500',
+        severity: 0
+      };
+    }
+
+    const lectura = datos[datos.length - 1];
     
-    const lastReading = data[data.length - 1];
-    const rangosNivel = RANGOS[`nivel${revolucionNivel}`];
-
-    // Función para verificar si un valor está en un rango
-    const enRango = (valor, rango) => {
-      return valor >= rango.min && valor <= rango.max;
-    };
-
-    // Verificar si los valores están en rangos de falla
-    const esFalla = 
-      enRango(Math.abs(lastReading.accel_x), rangosNivel.falla.x) ||
-      enRango(Math.abs(lastReading.accel_y), rangosNivel.falla.y) ||
-      enRango(Math.abs(lastReading.accel_z), rangosNivel.falla.z);
-
-    if (esFalla) {
-      return { 
-        status: 'Falla Inminente', 
-        icon: XCircleIcon, 
+    // Verificar cada eje para falla
+    if (
+      estaEnRangoFalla(lectura.accel_x, 'x') ||
+      estaEnRangoFalla(lectura.accel_y, 'y') ||
+      estaEnRangoFalla(lectura.accel_z, 'z')
+    ) {
+      return {
+        status: 'Falla Inminente',
+        icon: XCircleIcon,
         color: 'text-red-500',
-        nivel: revolucionNivel
+        severity: 2
       };
     }
-
-    // Verificar si los valores están en rangos de alerta
-    const esAlerta = 
-      enRango(Math.abs(lastReading.accel_x), rangosNivel.alerta.x) ||
-      enRango(Math.abs(lastReading.accel_y), rangosNivel.alerta.y) ||
-      enRango(Math.abs(lastReading.accel_z), rangosNivel.alerta.z);
-
-    if (esAlerta) {
-      return { 
-        status: 'Alerta', 
-        icon: ExclamationTriangleIcon, 
+    
+    // Verificar cada eje para alerta
+    if (
+      estaEnRangoAlerta(lectura.accel_x, 'x') ||
+      estaEnRangoAlerta(lectura.accel_y, 'y') ||
+      estaEnRangoAlerta(lectura.accel_z, 'z')
+    ) {
+      return {
+        status: 'Alerta',
+        icon: ExclamationTriangleIcon,
         color: 'text-yellow-500',
-        nivel: revolucionNivel
+        severity: 1
       };
     }
 
-    // Si no es falla ni alerta, está en rango normal
-    return { 
-      status: 'Operación Normal', 
-      icon: CheckCircleIcon, 
+    // Si todos los valores están en rango normal
+    return {
+      status: 'Operación Normal',
+      icon: CheckCircleIcon,
       color: 'text-green-500',
-      nivel: revolucionNivel
+      severity: 0
     };
+  };
+
+  // Función para obtener el color de la barra de vibración
+  const getVibrationColor = (value, axis) => {
+    if (estaEnRangoFalla(value, axis.toLowerCase())) {
+      return 'bg-red-500';
+    }
+    if (estaEnRangoAlerta(value, axis.toLowerCase())) {
+      return 'bg-yellow-500';
+    }
+    return 'bg-green-500';
+  };
+
+  // Efecto para actualizar el estado
+  useEffect(() => {
+    if (motorData.length > 0) {
+      const nuevoEstado = determinarEstado(motorData);
+      setCurrentStatus(nuevoEstado.status);
+    }
+  }, [motorData]);
+
+
+  const toggleDataCollection = async () => {
+    try {
+      if (!isCollecting) {
+        await axios.get(`${API_ENDPOINT}/start_collection`);
+        setIsCollecting(true);
+        setModelPrediction(null);
+        setPredictionConfidence(null);
+      } else {
+        const response = await axios.get(`${API_ENDPOINT}/stop_collection`);
+        setIsCollecting(false);
+        setModelPrediction(response.data.predicted_status);
+        setPredictionConfidence(response.data.prediction_proba);
+      }
+    } catch (error) {
+      console.error('Error al controlar la recolección:', error);
+    }
   };
 
   const getStatusDetails = (status) => {
     switch (status) {
       case 'Operación Normal':
         return {
-          description: `Licuadora funcionando correctamente en nivel ${revolucionNivel}`,
+          description: 'Licuadora funcionando correctamente',
           recommendation: 'Continuar con el uso normal'
         };
       case 'Alerta':
         return {
-          description: `Vibraciones elevadas detectadas en nivel ${revolucionNivel}`,
+          description: 'Vibraciones elevadas detectadas',
           recommendation: 'Revisar contenido y ajuste de cuchillas'
         };
       case 'Falla Inminente':
         return {
-          description: `¡Niveles críticos en revoluciones nivel ${revolucionNivel}!`,
+          description: '¡Niveles críticos de vibración!',
           recommendation: '¡Detener la licuadora inmediatamente!'
         };
       default:
@@ -131,77 +165,81 @@ const Dashboard = () => {
     }
   };
 
-  // Función para generar datos ficticios según el nivel
-  const generarDatosFicticios = (nivel) => {
-    const rangos = RANGOS[`nivel${nivel}`].normal;
-    
-    // Genera valores aleatorios dentro de los rangos normales
-    const randomEnRango = (min, max) => {
-      return Math.random() * (max - min) + min;
-    };
+  const ModelPrediction = () => {
+    if (!modelPrediction) return null;
 
-    // Ocasionalmente genera datos de alerta o falla (20% de probabilidad)
-    const probabilidad = Math.random();
-    if (probabilidad > 0.8) {
-      // Datos de alerta o falla
-      return {
-        timestamp: new Date().toISOString(),
-        accel_x: randomEnRango(-8.7, 20.0),
-        accel_y: randomEnRango(-15.5, 6.9),
-        accel_z: randomEnRango(18.0, 20.1)
-      };
-    }
-
-    // Datos normales
-    return {
-      timestamp: new Date().toISOString(),
-      accel_x: randomEnRango(rangos.x.min, rangos.x.max),
-      accel_y: randomEnRango(rangos.y.min, rangos.y.max),
-      accel_z: randomEnRango(rangos.z.min, rangos.z.max)
-    };
-  };
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Comentamos la llamada a ThingSpeak
-        /*const response = await axios.get(
-          `https://api.thingspeak.com/channels/${THINGSPEAK_CHANNEL_ID}/feeds.json`,
-          {
-            params: {
-              api_key: THINGSPEAK_API_KEY,
-              results: 20,
-            }
-          }
-        );*/
-        
-        // En su lugar, generamos datos ficticios
-        const nuevosDatos = generarDatosFicticios(revolucionNivel);
-        
-        setMotorData(prevData => {
-          // Mantener solo los últimos 20 registros
-          const updatedData = [...prevData, nuevosDatos].slice(-20);
-          return updatedData;
-        });
-        
-        // Actualizar el estado
-        setStatus(getStatusInfo([nuevosDatos]).status);
-      } catch (error) {
-        console.error('Error al generar datos:', error);
+    const getPredictionColor = (status) => {
+      switch (status) {
+        case 'Normal': return 'text-green-500';
+        case 'Anómalo': return 'text-yellow-500';
+        case 'Falla': return 'text-red-500';
+        default: return 'text-gray-500';
       }
     };
 
-    // Hacer la primera llamada inmediatamente
-    fetchData();
+    return (
+      <div className="mt-6 bg-gray-800 rounded-lg p-4 shadow-lg">
+        <h3 className="text-lg font-medium mb-4">Predicción del Modelo</h3>
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-400">Estado Predicho:</span>
+            <span className={`text-lg font-bold ${getPredictionColor(modelPrediction)}`}>
+              {modelPrediction}
+            </span>
+          </div>
+          {predictionConfidence && (
+            <div className="space-y-2">
+              <p className="text-sm text-gray-400">Nivel de Confianza:</p>
+              <div className="grid grid-cols-3 gap-2">
+                {['Normal', 'Anómalo', 'Falla'].map((state, index) => (
+                  <div key={state} className="bg-gray-700 rounded p-2">
+                    <div className="text-sm text-gray-300 mb-1">{state}</div>
+                    <div className="font-bold">
+                      {(predictionConfidence[0][index] * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
-    // Configurar el intervalo de actualización
-    const interval = setInterval(fetchData, UPDATE_INTERVAL);
+  useEffect(() => {
+    let interval;
 
-    // Limpiar el intervalo cuando el componente se desmonte
-    return () => clearInterval(interval);
-  }, [revolucionNivel]); // Agregamos revolucionNivel como dependencia
+    const fetchData = async () => {
+      try {
+        const response = await axios.get(`${API_ENDPOINT}/get_accel_data`);
+        const nuevosDatos = {
+          timestamp: new Date().toISOString(),
+          accel_x: response.data.x,
+          accel_y: response.data.y,
+          accel_z: response.data.z
+        };
+    
+        setMotorData(prevData => {
+          const updatedData = [...prevData, nuevosDatos].slice(-20);
+          return updatedData;
+        });
+      } catch (error) {
+        console.error('Error al obtener datos del acelerómetro:', error);
+      }
+    };
+    
+    if (isCollecting) {
+      fetchData();
+      interval = setInterval(fetchData, UPDATE_INTERVAL);
+    }
 
-  const statusInfo = getStatusInfo(motorData);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isCollecting]);
+
+  const statusInfo = determinarEstado(motorData);
   const StatusIcon = statusInfo.icon;
 
   return (
@@ -212,14 +250,26 @@ const Dashboard = () => {
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold">
               Monitor Licuadora Oster BLST4655
             </h1>
-            <select
-              value={revolucionNivel}
-              onChange={(e) => setRevolucionNivel(Number(e.target.value))}
-              className="bg-gray-700 text-white rounded-lg px-3 py-2"
+            <button
+              onClick={toggleDataCollection}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                isCollecting 
+                  ? 'bg-red-600 hover:bg-red-700' 
+                  : 'bg-green-600 hover:bg-green-700'
+              }`}
             >
-              <option value={1}>Nivel 1</option>
-              <option value={2}>Nivel 2</option>
-            </select>
+              {isCollecting ? (
+                <>
+                  <StopIcon className="h-5 w-5" />
+                  Detener Recolección
+                </>
+              ) : (
+                <>
+                  <PlayIcon className="h-5 w-5" />
+                  Iniciar Recolección
+                </>
+              )}
+            </button>
           </div>
           
           <div className="mt-4 p-4 bg-gray-800 rounded-lg shadow-lg">
@@ -259,13 +309,7 @@ const Dashboard = () => {
                 const value = motorData.length > 0 
                   ? motorData[motorData.length - 1][`accel_${axis.toLowerCase()}`] 
                   : 0;
-                const vibrationLevel = Math.abs(value);
-                const getVibrationColor = (level) => {
-                  if (level > 6) return 'bg-red-500';
-                  if (level > 3) return 'bg-yellow-500';
-                  return 'bg-green-500';
-                };
-
+                
                 return (
                   <div key={axis} className="bg-gray-700 rounded-lg p-3">
                     <div className="flex justify-between items-center mb-2">
@@ -274,8 +318,13 @@ const Dashboard = () => {
                     </div>
                     <div className="h-2 bg-gray-600 rounded-full overflow-hidden">
                       <div 
-                        className={`h-full ${getVibrationColor(vibrationLevel)} transition-all duration-300`}
-                        style={{ width: `${Math.min((vibrationLevel / 8) * 100, 100)}%` }}
+                        className={`h-full ${getVibrationColor(value, axis)} transition-all duration-300`}
+                        style={{ 
+                          width: `${Math.min((Math.abs(value) / Math.max(
+                            RANGOS.falla[axis.toLowerCase()].max,
+                            Math.abs(RANGOS.falla[axis.toLowerCase()].min)
+                          )) * 100, 100)}%` 
+                        }}
                       />
                     </div>
                   </div>
@@ -332,6 +381,13 @@ const Dashboard = () => {
                   dataKey="accel_y" 
                   stroke="#22c55e" 
                   dot={false}
+                  name
+                  />
+                  <Line 
+                  type="monotone" 
+                  dataKey="accel_y" 
+                  stroke="#22c55e" 
+                  dot={false}
                   name="Eje Y"
                   strokeWidth={2}
                 />
@@ -362,10 +418,11 @@ const Dashboard = () => {
               </div>
             </div>
           ))}
+          <ModelPrediction />
         </div>
       </div>
     </div>
   );
 };
 
-export default Dashboard; 
+export default Dashboard;
